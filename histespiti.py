@@ -1,0 +1,1 @@
+#ek olarak video kaydet veya başka olaylar da eklenebiilir

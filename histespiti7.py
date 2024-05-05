@@ -1,14 +1,14 @@
-#perspektif görünümü opencv getPerspectiveTransform ile doğrultulmuş düz görüntü matrise dönüştürme
-#bu dönüştürülmüş matrisi kullanarak araçların yaklaşık x,y koordinatlarını hesaplama
-#diğer gerekli bileşenler
-
 import supervision as sv
 import cv2
 from ultralytics import YOLO
 import numpy as np
+from collections import defaultdict,deque
+
 
 SOURCE=np.array([[int(1252*0.3),int(787*0.3)],[int(2298*0.3),int(803*0.3)],
                  [int(5039*0.3),int(2159*0.3)],[int(550*0.3),int(2159*0.3)]])
+#çok kısa mesafe farklarında kaynaklı hataları gidermek için
+#sadece koordinat sayısı video fps oranın yarısından büyük olan görüntüler takibe alacağız
 
 TARGET_WIDTH=25
 TARGET_HEIGHT=250
@@ -52,6 +52,9 @@ if __name__=="__main__":
     polygon_zone=sv.polygonZone(polygon=SOURCE,frame_resolution_wh=video_info.resolution_wh)
 
     view_transformer=ViewTransformer(soruce=SOURCE,target=TARGET)
+    
+    coordinates=defaultdict(lambda:deque(maxlen=video_info.fps))
+
 
     for frame in frame_generator:
         half_frame=cv2.resize(frame,(0,0),fx=0.3,fy=0.3)
@@ -63,9 +66,31 @@ if __name__=="__main__":
         points=detections.get_anchor_coordinates(anchor=sv.Position.BOTTOM_CENTER)
         points=view_transformer.transform_points(points=points).astype(int)
 
-        labels=[
-            f"x:{x},y={y}" #araçların x ve y cinsindden programı
-            for[x,y] in points]
-        
+        for tracker_id, [_,y] in zip(detections.tracker_id,points):
+            coordinates[tracker_id].append(y)
+            
+        labels=[]
+        for tracker_id in detections.tracker_id:
+            if len(coordinates[tracker_id])<video_info.fps/2:
+                labels.append(f"{tracker_id}")
+            else:
+                coordinates_start=coordinates[tracker_id][-1]
+                coordinates_end=coordinates[tracker_id][0]
+                distance=abs(coordinates_start-coordinates_end)
+                time=len(coordinates[tracker_id])/video_info.fps
+                speed=distance/time*3.6
+                labels.append(f"#{tracker_id} {int(speed)} km/h")
+
         annotated_frame=half_frame.copy()
-        annotated_frame=sv.draw_polygon(annotated_frame_polygone=SOURCE,color=sv.Color.red())
+        annotated_frame=sv.draw_polygon(annotated_frame,polygon=SOURCE,color=sv.Color.red())
+        annotated_frame=bounding_box_annotator.annotate(
+            scene=annotated_frame,detections=detections
+        )
+        annotated_frame=label_annotator.annotator(
+            scene=annotated_frame,detections=detections,labels=labels
+        )
+
+        cv2.imshow("frame",annotated_frame)
+        if cv2.waitKey(1) & 0xFF==ord("q"):
+            break
+           
